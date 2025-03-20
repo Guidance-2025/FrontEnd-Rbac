@@ -186,12 +186,17 @@ export const AuthProvider = ({ children }) => {
   const isAdmin = () => {
     console.log('Checking admin status:', user);
     console.log('User role:', user?.role);
+    console.log('User role type:', typeof user?.role);
     
     // Check if user exists and has a role
-    if (!user || !user.role) return false;
+    if (!user || !user.role) {
+      console.log('No user or role found');
+      return false;
+    }
     
     // Handle both string and object roles
     const roleName = typeof user.role === 'string' ? user.role : user.role.name;
+    console.log('Role name:', roleName);
     return roleName?.toLowerCase() === 'admin';
   };
 
@@ -199,28 +204,35 @@ export const AuthProvider = ({ children }) => {
     console.log('Checking permission:', permissionName);
     console.log('User role:', user?.role);
     console.log('User permissions:', user?.role?.permissions);
+    console.log('User role type:', typeof user?.role);
 
     // If user is admin, they have all permissions
     if (isAdmin()) {
+      console.log('User is admin, granting all permissions');
       return true;
     }
 
     // Handle string roles (no permissions)
     if (typeof user?.role === 'string') {
+      console.log('User has string role, no permissions available');
       return false;
     }
 
     // Check if user has role and permissions
     if (!user?.role?.permissions) {
+      console.log('No permissions found for user role');
       return false;
     }
 
     // Check if the permission exists in the user's permissions
     // Convert both to lowercase for case-insensitive comparison
-    return user.role.permissions.some(permission => {
+    const hasPermission = user.role.permissions.some(permission => {
       const permToCheck = typeof permission === 'string' ? permission : permission.name;
       return permToCheck.toLowerCase() === permissionName.toLowerCase();
     });
+    
+    console.log('Permission check result:', hasPermission);
+    return hasPermission;
   };
 
   const updateUserProfile = async (userData) => {

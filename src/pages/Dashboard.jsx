@@ -102,10 +102,10 @@ const Dashboard = () => {
                 <span className="font-medium text-gray-700 min-w-[100px]">Email:</span>
                 <span className="text-gray-900">{user.email}</span>
               </div>
-              <div className="flex items-center space-x-3">
+              {/* <div className="flex items-center space-x-3">
                 <span className="font-medium text-gray-700 min-w-[100px]">Role:</span>
                 <span className="text-gray-900">{user.role?.name || 'Admin'}</span>
-              </div>
+              </div> */}
             </div>
           </div>
         </div>

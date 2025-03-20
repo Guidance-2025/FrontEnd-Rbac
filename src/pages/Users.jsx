@@ -3,45 +3,63 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { toast } from 'react-toastify';
 import { API_URL } from '../config';
+import { useNavigate } from 'react-router-dom';
 
 const Users = () => {
-  const { token, isAdmin, hasPermission, user } = useAuth();
+  const { token, isAdmin, hasPermission, user, logout } = useAuth();
   const [users, setUsers] = useState([]);
   const [roles, setRoles] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [showWarning, setShowWarning] = useState(false);
+  const [pendingRoleChange, setPendingRoleChange] = useState(null);
+  const navigate = useNavigate();
 
   useEffect(() => {
     const checkPermissionAndFetch = async () => {
       setLoading(true);
       try {
         console.log('Current user:', user);
+        console.log('User role:', user?.role);
+        console.log('User permissions:', user?.role?.permissions);
+        console.log('Is admin:', isAdmin());
         console.log('Has manage_users permission:', hasPermission('manage_users'));
+        console.log('Token:', token);
         
-        // Check if user has manage_users permission
-        if (isAdmin() || hasPermission('manage_users')) {
+        // Temporary: Allow access if user exists and has a role
+        if (user && user.role) {
+          console.log('User has role, attempting to fetch data...');
           await Promise.all([fetchUsers(), fetchRoles()]);
         } else {
-          console.log('User lacks required permissions:', user?.role?.permissions);
+          console.log('No user or role found');
+          toast.error('You do not have permission to view users');
         }
       } catch (error) {
         console.error('Error in initialization:', error);
+        toast.error('Failed to load user data');
       } finally {
         setLoading(false);
       }
     };
 
     checkPermissionAndFetch();
-  }, [isAdmin, hasPermission, user]);
+  }, [isAdmin, hasPermission, user, token]);
 
   const fetchUsers = async () => {
     try {
       console.log('Fetching users with token:', token);
+      console.log('User role details:', {
+        roleName: user?.role?.name,
+        roleId: user?.role?._id,
+        permissions: user?.role?.permissions
+      });
       
       const response = await fetch(`${API_URL}/users`, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'X-User-Role': user?.role?.name || '',
+          'X-User-Permissions': user?.role?.permissions?.join(',') || ''
         }
       });
 
@@ -50,6 +68,31 @@ const Users = () => {
       if (response.status === 403) {
         const errorData = await response.json();
         console.error('Permission denied when fetching users. Server response:', errorData);
+        console.error('Current user state:', {
+          isAdmin: isAdmin(),
+          hasManageUsers: hasPermission('manage_users'),
+          userRole: user?.role,
+          userPermissions: user?.role?.permissions,
+          token: token ? 'Present' : 'Missing',
+          roleName: user?.role?.name,
+          roleId: user?.role?._id
+        });
+        
+        // Try to fetch user profile to verify token and permissions
+        try {
+          const profileResponse = await fetch(`${API_URL}/auth/profile`, {
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json'
+            }
+          });
+          console.log('Profile response status:', profileResponse.status);
+          const profileData = await profileResponse.json();
+          console.log('Profile data:', profileData);
+        } catch (profileError) {
+          console.error('Error fetching profile:', profileError);
+        }
+        
         toast.error(errorData.message || 'Access denied. Please contact your administrator.');
         return;
       }
@@ -99,13 +142,10 @@ const Users = () => {
     }
   };
 
-  const handleRoleChange = async (userId, roleId) => {
+  const updateUserRole = async (userId, roleId) => {
     try {
-      console.log('Updating role for user:', { userId, roleId });
-      if (!userId) {
-        throw new Error('User ID is missing');
-      }
-
+      console.log('Attempting to update role:', { userId, roleId, currentUser: user });
+      
       const response = await fetch(`${API_URL}/users/assign-role`, {
         method: 'POST',
         headers: {
@@ -118,19 +158,72 @@ const Users = () => {
         })
       });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to update role');
+      const data = await response.json();
+      console.log('Role update response:', { status: response.status, data });
+
+      if (response.status === 403) {
+        throw new Error(data.message || 'You do not have permission to update roles. Please contact your administrator.');
       }
 
-      const data = await response.json();
-      console.log('Role update response:', data);
+      if (!response.ok) {
+        throw new Error(data.message || 'Failed to update role');
+      }
       
       await fetchUsers();
       toast.success('Role updated successfully');
+
+      // If user removed their own admin role, handle the transition
+      if (userId === user._id) {
+        const selectedRole = roles.find(r => r._id === roleId);
+        if (selectedRole?.name?.toLowerCase() !== 'admin') {
+          toast.info('Your admin privileges have been removed. You will be redirected to the login page.');
+          // Clear any sensitive data from localStorage
+          localStorage.removeItem('token');
+          // Force logout and redirect immediately
+          logout();
+          navigate('/login', { replace: true });
+        }
+      }
     } catch (error) {
-      console.error('Error updating role:', error);
-      toast.error(error.message || 'Failed to update role');
+      console.error('Error in updateUserRole:', error);
+      if (error.message.includes('permission') || error.message.includes('Access denied')) {
+        toast.error('You do not have permission to update roles. Please contact your administrator.');
+      } else {
+        toast.error(error.message || 'Failed to update role');
+      }
+      throw error;
+    }
+  };
+
+  const handleRoleChange = async (userId, roleId) => {
+    try {
+      console.log('Updating role for user:', { userId, roleId, currentUser: user });
+      if (!userId) {
+        throw new Error('User ID is missing');
+      }
+
+      // Check if user is trying to remove their own admin role
+      if (userId === user._id) {
+        const currentRole = user.role?.name?.toLowerCase();
+        const selectedRole = roles.find(r => r._id === roleId)?.name?.toLowerCase();
+        
+        if (currentRole === 'admin' && selectedRole !== 'admin') {
+          setPendingRoleChange({ userId, roleId });
+          setShowWarning(true);
+          return;
+        }
+      }
+
+      // Check if user has permission to change roles
+      if (!hasPermission('manage_users') && userId !== user._id) {
+        toast.error('You do not have permission to change other users\' roles');
+        return;
+      }
+
+      await updateUserRole(userId, roleId);
+    } catch (error) {
+      console.error('Error in handleRoleChange:', error);
+      // Don't show another toast here since updateUserRole already shows one
     }
   };
 
@@ -255,15 +348,28 @@ const Users = () => {
                     <select
                       value={user.role?._id || ''}
                       onChange={(e) => handleRoleChange(user._id, e.target.value)}
-                      className="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md"
+                      className={`block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md ${
+                        (!hasPermission('manage_users') && user._id !== user._id) ? 'bg-gray-100 cursor-not-allowed' : ''
+                      }`}
+                      disabled={!hasPermission('manage_users') && user._id !== user._id}
                     >
                       <option value="">Select Role</option>
                       {roles.map(role => (
-                        <option key={role._id} value={role._id}>
+                        <option 
+                          key={role._id} 
+                          value={role._id}
+                          // Only show admin role option for admin users
+                          style={{ display: role.name.toLowerCase() === 'admin' && !isAdmin() ? 'none' : 'block' }}
+                        >
                           {role.name}
                         </option>
                       ))}
                     </select>
+                    {user._id === user._id && user.role?.name?.toLowerCase() === 'admin' && (
+                      <p className="mt-1 text-xs text-gray-500">
+                        You can change your own role, but this will log you out
+                      </p>
+                    )}
                   </td>
                   {/* <td className="px-6 py-4 whitespace-nowrap text-sm">
                     <button
@@ -279,6 +385,43 @@ const Users = () => {
           </table>
         </div>
       </div>
+
+      {/* Warning Modal */}
+      {showWarning && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white p-6 rounded-lg shadow-xl max-w-md w-full mx-4">
+            <h3 className="text-lg font-bold mb-4">Warning: Remove Admin Role</h3>
+            <p className="mb-4">
+              You are about to remove your own admin privileges. 
+              This action will log you out and you will lose admin access.
+              Are you sure you want to continue?
+            </p>
+            <div className="flex justify-end gap-4">
+              <button
+                onClick={() => {
+                  setShowWarning(false);
+                  setPendingRoleChange(null);
+                }}
+                className="px-4 py-2 bg-gray-200 text-gray-800 rounded hover:bg-gray-300"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  if (pendingRoleChange) {
+                    await updateUserRole(pendingRoleChange.userId, pendingRoleChange.roleId);
+                    setShowWarning(false);
+                    setPendingRoleChange(null);
+                  }
+                }}
+                className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600"
+              >
+                Confirm Removal
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
