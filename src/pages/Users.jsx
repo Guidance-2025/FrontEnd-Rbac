@@ -57,9 +57,7 @@ const Users = () => {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-          'X-User-Role': user?.role?.name || '',
-          'X-User-Permissions': user?.role?.permissions?.join(',') || ''
+          'Content-Type': 'application/json'
         }
       });
 
