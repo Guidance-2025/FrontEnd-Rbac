@@ -1,7 +1,7 @@
 {
   "name": "my-app",
   "private": false,
-  "homepage": "https://guidance-2025.github.io/FrontEnd-Rbac/",
+  "homepage": "https://guidance-2025.github.io/FrontEnd-Rbac",
   "version": "0.0.0",
   "type": "module",
   "scripts": {
